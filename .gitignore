@@ -1,0 +1,72 @@
+# General
+.DS_Store
+Thumbs.db
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# dotenv
+.env
+
+# Logs
+logs/
+*.log
+
+# Compilados
+dist/
+build/
+
+# VSCode settings
+.vscode/
+
+# Sistema operativo
+*.swp
+
+# Archivos generados
+audio.mp3
+transcripcion.txt
+
+# Next.js build
+.next/
+out/
+
+
+
+# Ignorar herramientas ejecutables
+herramientas/ffmpeg/
+herramientas/yt-dlp/
+
+# Documentación y datos sensibles
+decision_ramas_transcriptor.pdf
+www.youtube.com_cookies.txt
+*Documento de Cierre de Fase.txt
+
+
+# ---------------------------- ADICIONES DE LIMPIEZA ----------------------------
+
+# Archivos PDF y documentos de planificación no esenciales
+Plan_*
+Resumen*
+endpoints.pdf
+Guía Práctica endpoints.pdf
+*.postman_collection.json
+
+# Archivos README alternativos (evitar subir pruebas o duplicados)
+README_transcriptor-*.md
+
+# Archivos comprimidos o temporales
+*.zip
+*.rar
+*.7z
+*.tar.gz
+
+# Salidas de pruebas o archivos generados
+output.txt
+transcripciones/
+
+# Otros archivos de ayuda que no se deberían commitear
+*.docx
+*.odt
