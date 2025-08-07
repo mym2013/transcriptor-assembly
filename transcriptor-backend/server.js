@@ -1,195 +1,69 @@
-const express = require('express');
-const cors = require('cors');
-const fs = require('fs');
-const path = require('path');
-require('dotenv').config();
-const { spawn } = require('child_process');
-const sqlite3 = require('better-sqlite3');
+// server.js corregido para producción en Railway
+import express from 'express';
+import cors from 'cors';
+import dotenv from 'dotenv';
+import fs from 'fs';
+import { spawn } from 'child_process';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { OpenAI } from 'openai';
 
-// Inicializar base de datos SQLite
-const db = new sqlite3('transcripciones.sqlite');
-db.exec(`
-  CREATE TABLE IF NOT EXISTS transcripciones (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    url TEXT,
-    texto TEXT,
-    fecha TEXT
-  )
-`);
+dotenv.config();
 
 const app = express();
-
-// Middleware CORS con soporte para headers personalizados
-app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header(
-    'Access-Control-Allow-Headers',
-    'Origin, X-Requested-With, Content-Type, Accept, x-access-key'
-  );
-  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  if (req.method === 'OPTIONS') return res.sendStatus(200);
-  next();
-});
-
+app.use(cors());
 app.use(express.json());
 
-// Middleware para validar clave de acceso
-app.use((req, res, next) => {
-  const userKey = req.headers['x-access-key'];
-  if (userKey !== process.env.ACCESS_KEY) {
-    return res.status(401).json({ error: 'Clave de acceso no válida' });
-  }
-  next();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+app.get('/', (req, res) => {
+  res.send('Servidor backend activo ✅');
 });
 
-/**
- * ==============================
- * 🔹 Endpoint para Transcripción
- * ==============================
- */
 app.post('/transcribir', async (req, res) => {
-  const { url, usarCookies } = req.body;
-  if (!url) return res.status(400).json({ error: 'URL no proporcionada' });
+  const videoURL = req.body.url;
+  const accessKey = req.body.key;
 
-  const audioPath = path.join(__dirname, 'audio.mp3');
-  console.log('✅ Descargando audio con yt-dlp...');
-
-  const ytdlpArgs = [
-    url,
-    '--extract-audio',
-    '--audio-format', 'mp3',
-    '--force-overwrites',
-    '--no-cache-dir',
-    '-o', 'audio.mp3'
-  ];
-
-  if (usarCookies) {
-    ytdlpArgs.splice(1, 0, '--cookies', 'cookies.txt');
+  if (!videoURL || accessKey !== process.env.ACCESS_KEY) {
+    return res.status(401).json({ error: 'URL o clave inválida' });
   }
 
-  const ytdlp = spawn('yt-dlp', ytdlpArgs);
-  ytdlp.stdout.on('data', data => console.log(`yt-dlp stdout: ${data}`));
-  ytdlp.stderr.on('data', data => console.error(`yt-dlp stderr: ${data}`));
-
-  ytdlp.on('close', async code => {
-    if (code !== 0) {
-      console.error(`yt-dlp terminó con código ${code}`);
-      return res.status(500).json({ error: 'Error al descargar audio' });
-    }
-
-    try {
-      console.log('✅ Audio descargado correctamente.');
-      const OpenAI = require('openai');
-      const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-      const stats = fs.statSync(audioPath);
-      if (stats.size > 25 * 1024 * 1024) {
-        console.warn('⚠️ Audio supera los 25MB. Dividiendo con FFmpeg...');
-        const tempDir = path.join(require('os').tmpdir(), 'chunks');
-        fs.mkdirSync(tempDir, { recursive: true });
-
-        const segmentCmd = [
-          '-i', 'audio.mp3',
-          '-f', 'segment',
-          '-segment_time', '300',
-          '-c', 'copy',
-          path.join(tempDir, 'chunk_%03d.mp3')
-        ];
-
-        await new Promise((resolve, reject) => {
-          const ffmpeg = spawn('ffmpeg', segmentCmd);
-          ffmpeg.stdout.on('data', d => console.log(`ffmpeg: ${d}`));
-          ffmpeg.stderr.on('data', d => console.log(`ffmpeg: ${d}`));
-          ffmpeg.on('close', code => code === 0 ? resolve() : reject());
-        });
-
-        const files = fs.readdirSync(tempDir).filter(f => f.endsWith('.mp3'));
-        let fullText = '';
-
-        for (const file of files) {
-          console.log(`🔹 Transcribiendo fragmento: ${file}`);
-          const transcription = await openai.audio.transcriptions.create({
-            file: fs.createReadStream(path.join(tempDir, file)),
-            model: 'whisper-1',
-            response_format: 'text'
-          });
-          fullText += transcription + '\n';
-        }
-
-        fs.writeFileSync('transcripcion.txt', fullText.trim());
-
-        db.prepare('INSERT INTO transcripciones (url, texto, fecha) VALUES (?, ?, ?)').run(
-          url,
-          fullText.trim(),
-          new Date().toISOString()
-        );
-
-        return res.json({ transcripcion: fullText.trim() });
-      }
-
-      console.log('✅ Transcribiendo audio con Whisper...');
-      const transcription = await openai.audio.transcriptions.create({
-        file: fs.createReadStream(audioPath),
-        model: 'whisper-1',
-        response_format: 'text'
-      });
-
-      fs.writeFileSync('transcripcion.txt', transcription);
-
-      db.prepare('INSERT INTO transcripciones (url, texto, fecha) VALUES (?, ?, ?)').run(
-        url,
-        transcription,
-        new Date().toISOString()
-      );
-
-      return res.json({ transcripcion: transcription });
-
-    } catch (err) {
-      console.error('Error al transcribir:', err);
-      return res.status(500).json({ error: 'Error al transcribir el audio' });
-    }
-  });
-});
-
-/**
- * ===========================
- * 🔹 Endpoint para Resumir
- * ===========================
- */
-app.post('/resumir', async (req, res) => {
-  const { texto } = req.body;
-  if (!texto) return res.status(400).json({ error: 'Texto no proporcionado' });
+  const outputPath = path.join(__dirname, 'audio.mp3');
+  const txtPath = path.join(__dirname, 'transcripcion.txt');
 
   try {
-    const OpenAI = require('openai');
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    // Descargar audio
+    await new Promise((resolve, reject) => {
+      const proceso = spawn('yt-dlp', [
+        '-x', '--audio-format', 'mp3',
+        '-o', outputPath,
+        videoURL
+      ]);
 
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-3.5-turbo',
-      messages: [
-        {
-          role: 'system',
-          content: `Eres un asistente que crea resúmenes ejecutivos detallados de transcripciones. Quiero que generes un resumen estructurado y proporcional a la longitud del texto original.`
-        },
-        {
-          role: 'user',
-          content: texto
-        }
-      ]
+      proceso.stderr.on('data', data => console.error(`yt-dlp error: ${data}`));
+      proceso.on('close', code => code === 0 ? resolve() : reject(`yt-dlp falló con código ${code}`));
     });
 
-    res.json({ resumen: completion.choices[0].message.content });
+    // Transcribir
+    const transcription = await openai.audio.transcriptions.create({
+      file: fs.createReadStream(outputPath),
+      model: 'whisper-1',
+    });
 
+    const texto = transcription.text;
+    fs.writeFileSync(txtPath, texto);
+
+    res.json({ transcripcion: texto });
   } catch (err) {
-    console.error('Error al generar el resumen:', err);
-    res.status(500).json({ error: 'Error al generar el resumen' });
+    console.error('Error:', err);
+    res.status(500).json({ error: 'Error en la transcripción' });
   }
 });
 
-/**
- * ===========================
- * 🔹 Iniciar Servidor
- * ===========================
- */
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => console.log(`Servidor corriendo en el puerto ${PORT}`));
+const port = process.env.PORT || 3000;
+app.listen(port, () => {
+  console.log(`Servidor corriendo en el puerto ${port}`);
+});
