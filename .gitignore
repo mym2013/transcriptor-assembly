@@ -70,3 +70,15 @@ transcripciones/
 # Otros archivos de ayuda que no se deberían commitear
 *.docx
 *.odt
+
+
+# Backend env y base de datos
+transcriptor-backend/.env
+transcriptor-backend/transcripciones.sqlite
+
+# Dependencias y temporales
+node_modules
+.DS_Store
+
+
+transcriptor-backend/cookies.txt
