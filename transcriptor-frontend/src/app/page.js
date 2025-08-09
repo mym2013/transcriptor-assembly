@@ -11,6 +11,9 @@ export default function Home() {
   const [cargando, setCargando] = useState(false);
   const [cargandoResumen, setCargandoResumen] = useState(false);
 
+  // URL del backend según entorno
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+
   const manejarTranscripcion = async () => {
     setError('');
     setTranscripcion('');
@@ -24,7 +27,7 @@ export default function Home() {
     setCargando(true);
 
     try {
-      const response = await fetch('https://transcriptor-rail.up.railway.app/transcribir', {
+      const response = await fetch(`${API_BASE_URL}/transcribir`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -59,7 +62,7 @@ export default function Home() {
     setCargandoResumen(true);
 
     try {
-      const response = await fetch('https://transcriptor-rail.up.railway.app/resumir', {
+      const response = await fetch(`${API_BASE_URL}/resumir`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -181,6 +184,5 @@ export default function Home() {
     </main>
   );
 }
-
 
 
