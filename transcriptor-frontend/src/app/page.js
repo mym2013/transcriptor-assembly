@@ -33,7 +33,7 @@ export default function Home() {
           'Content-Type': 'application/json',
           'x-access-key': 'clave-gonzalo-2025'
         },
-        body: JSON.stringify({ url, usarCookies: true })
+        body: JSON.stringify({ url, usarCookies: false })
       });
 
       if (!response.ok) {
