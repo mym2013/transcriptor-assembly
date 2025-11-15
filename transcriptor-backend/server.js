@@ -1,13 +1,21 @@
+// Cargar variables de entorno
 require('dotenv').config();
-const { transcribeMP3 } = require('./helpers/assemblyai'); // ✅ nuevo
+
+// Helpers y dependencias principales
+const { transcribeMP3 } = require('./helpers/assemblyai');
 const express = require('express');
-const cors = require('cors');
+const cors = require('cors'); // disponible si luego quieres usar app.use(cors());
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const sqlite3 = require('better-sqlite3');
 
-// Inicializar base de datos SQLite
+// Rutas de autenticación
+const authRoutes = require('./auth/auth.routes');
+
+// ===============================
+// 🔹 Inicializar base de datos
+// ===============================
 const db = new sqlite3('transcripciones.sqlite');
 db.exec(`
   CREATE TABLE IF NOT EXISTS transcripciones (
@@ -18,6 +26,9 @@ db.exec(`
   )
 `);
 
+// ===============================
+// 🔹 Inicializar Express
+// ===============================
 const app = express();
 
 // CORS básico + preflight
@@ -32,16 +43,23 @@ app.use((req, res, next) => {
   next();
 });
 
+// Body parser JSON
 app.use(express.json());
 
 // Validación de clave de acceso
 app.use((req, res, next) => {
   const userKey = req.headers['x-access-key'];
+  console.log('🧪 userKey:', userKey, '| ENV ACCESS_KEY:', process.env.ACCESS_KEY);
   if (userKey !== process.env.ACCESS_KEY) {
     return res.status(401).json({ error: 'Clave de acceso no válida' });
   }
   next();
 });
+
+// ===============================
+// 🔹 Rutas de autenticación
+// ===============================
+app.use('/api/auth', authRoutes);
 
 /**
  * ==============================
@@ -63,6 +81,7 @@ app.post('/transcribir', async (req, res) => {
     '--no-cache-dir',
     '-o', 'audio.mp3'
   ];
+
   if (usarCookies) {
     // cookies.txt debe existir en el directorio backend
     ytdlpArgs.splice(1, 0, '--cookies', 'cookies.txt');
@@ -141,7 +160,7 @@ app.post('/transcribir', async (req, res) => {
  * ===========================
  * 🔹 Endpoint para Resumir
  * ===========================
- * (Deshabilitado temporalmente en esta rama)
+ * (Deshabilitado temporalmente en esta versión)
  */
 app.post('/resumir', (_req, res) => {
   return res.status(200).json({
