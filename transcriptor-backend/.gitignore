@@ -1,0 +1,30 @@
+# Dependencias
+node_modules/
+
+# Variables de entorno
+.env
+
+# Archivos temporales o generados
+*.mp3
+*.wav
+*.opus
+*.zip
+*.txt
+*.bak
+*.log
+
+# Bases de datos locales
+*.sqlite
+
+# Directorios temporales del sistema o builds
+.DS_Store
+Thumbs.db
+uploads/
+temp/
+chunks/
+
+# Copias de respaldo
+server.whisper.bak
+
+# Cache o configuración de VSCode
+.vscode/

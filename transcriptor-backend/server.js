@@ -1,8 +1,9 @@
+require('dotenv').config();
+const { transcribeMP3 } = require('./helpers/assemblyai'); // ✅ nuevo
 const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
-require('dotenv').config();
 const { spawn } = require('child_process');
 const sqlite3 = require('better-sqlite3');
 
@@ -19,7 +20,7 @@ db.exec(`
 
 const app = express();
 
-// Middleware CORS con soporte para headers personalizados
+// CORS básico + preflight
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header(
@@ -33,7 +34,7 @@ app.use((req, res, next) => {
 
 app.use(express.json());
 
-// Middleware para validar clave de acceso
+// Validación de clave de acceso
 app.use((req, res, next) => {
   const userKey = req.headers['x-access-key'];
   if (userKey !== process.env.ACCESS_KEY) {
@@ -62,14 +63,14 @@ app.post('/transcribir', async (req, res) => {
     '--no-cache-dir',
     '-o', 'audio.mp3'
   ];
-
   if (usarCookies) {
+    // cookies.txt debe existir en el directorio backend
     ytdlpArgs.splice(1, 0, '--cookies', 'cookies.txt');
   }
 
   const ytdlp = spawn('yt-dlp', ytdlpArgs);
-  ytdlp.stdout.on('data', data => console.log(`yt-dlp stdout: ${data}`));
-  ytdlp.stderr.on('data', data => console.error(`yt-dlp stderr: ${data}`));
+  ytdlp.stdout.on('data', d => console.log(`yt-dlp stdout: ${d}`));
+  ytdlp.stderr.on('data', d => console.error(`yt-dlp stderr: ${d}`));
 
   ytdlp.on('close', async code => {
     if (code !== 0) {
@@ -79,17 +80,17 @@ app.post('/transcribir', async (req, res) => {
 
     try {
       console.log('✅ Audio descargado correctamente.');
-      const OpenAI = require('openai');
-      const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
       const stats = fs.statSync(audioPath);
+
+      let fullText = '';
+
       if (stats.size > 25 * 1024 * 1024) {
-        console.warn('⚠️ Audio supera los 25MB. Dividiendo con FFmpeg...');
+        console.warn('⚠️ Audio > 25MB. Dividiendo con FFmpeg en ~300s...');
         const tempDir = path.join(require('os').tmpdir(), 'chunks');
         fs.mkdirSync(tempDir, { recursive: true });
 
         const segmentCmd = [
-          '-i', 'audio.mp3',
+          '-i', audioPath,
           '-f', 'segment',
           '-segment_time', '300',
           '-c', 'copy',
@@ -97,53 +98,38 @@ app.post('/transcribir', async (req, res) => {
         ];
 
         await new Promise((resolve, reject) => {
-          const ffmpeg = spawn('ffmpeg', segmentCmd);
-          ffmpeg.stdout.on('data', d => console.log(`ffmpeg: ${d}`));
-          ffmpeg.stderr.on('data', d => console.log(`ffmpeg: ${d}`));
-          ffmpeg.on('close', code => code === 0 ? resolve() : reject());
+          const ff = spawn('ffmpeg', segmentCmd);
+          ff.stderr.on('data', d => console.log(`ffmpeg: ${d}`));
+          ff.on('close', c => (c === 0 ? resolve() : reject(new Error(`ffmpeg code ${c}`))));
         });
 
-        const files = fs.readdirSync(tempDir).filter(f => f.endsWith('.mp3'));
-        let fullText = '';
+        // Ordenar para mantener secuencia correcta
+        const files = fs
+          .readdirSync(tempDir)
+          .filter(f => f.endsWith('.mp3'))
+          .sort((a, b) => a.localeCompare(b));
 
         for (const file of files) {
+          const chunkPath = path.join(tempDir, file);
           console.log(`🔹 Transcribiendo fragmento: ${file}`);
-          const transcription = await openai.audio.transcriptions.create({
-            file: fs.createReadStream(path.join(tempDir, file)),
-            model: 'whisper-1',
-            response_format: 'text'
-          });
-          fullText += transcription + '\n';
+          const t = await transcribeMP3(chunkPath); // ✅ AssemblyAI
+          fullText += (t || '') + '\n';
         }
-
-        fs.writeFileSync('transcripcion.txt', fullText.trim());
-
-        db.prepare('INSERT INTO transcripciones (url, texto, fecha) VALUES (?, ?, ?)').run(
-          url,
-          fullText.trim(),
-          new Date().toISOString()
-        );
-
-        return res.json({ transcripcion: fullText.trim() });
+      } else {
+        console.log('✅ Transcribiendo audio completo con AssemblyAI...');
+        fullText = await transcribeMP3(audioPath); // ✅ AssemblyAI
       }
 
-      console.log('✅ Transcribiendo audio con Whisper...');
-      const transcription = await openai.audio.transcriptions.create({
-        file: fs.createReadStream(audioPath),
-        model: 'whisper-1',
-        response_format: 'text'
-      });
-
-      fs.writeFileSync('transcripcion.txt', transcription);
+      fullText = (fullText || '').trim();
+      fs.writeFileSync('transcripcion.txt', fullText);
 
       db.prepare('INSERT INTO transcripciones (url, texto, fecha) VALUES (?, ?, ?)').run(
         url,
-        transcription,
+        fullText,
         new Date().toISOString()
       );
 
-      return res.json({ transcripcion: transcription });
-
+      return res.json({ transcripcion: fullText });
     } catch (err) {
       console.error('Error al transcribir:', err);
       return res.status(500).json({ error: 'Error al transcribir el audio' });
@@ -155,35 +141,12 @@ app.post('/transcribir', async (req, res) => {
  * ===========================
  * 🔹 Endpoint para Resumir
  * ===========================
+ * (Deshabilitado temporalmente en esta rama)
  */
-app.post('/resumir', async (req, res) => {
-  const { texto } = req.body;
-  if (!texto) return res.status(400).json({ error: 'Texto no proporcionado' });
-
-  try {
-    const OpenAI = require('openai');
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-3.5-turbo',
-      messages: [
-        {
-          role: 'system',
-          content: `Eres un asistente que crea resúmenes ejecutivos detallados de transcripciones. Quiero que generes un resumen estructurado y proporcional a la longitud del texto original.`
-        },
-        {
-          role: 'user',
-          content: texto
-        }
-      ]
-    });
-
-    res.json({ resumen: completion.choices[0].message.content });
-
-  } catch (err) {
-    console.error('Error al generar el resumen:', err);
-    res.status(500).json({ error: 'Error al generar el resumen' });
-  }
+app.post('/resumir', (_req, res) => {
+  return res.status(200).json({
+    resumen: '📝 Resumen deshabilitado temporalmente en la versión AssemblyAI.'
+  });
 });
 
 /**
